@@ -23,6 +23,6 @@ def download_and_prepare(data_dir):
         return None
 
 if __name__ == "__main__":
-    data_dir = "../data"
+    data_dir = "./data"
     out = download_and_prepare(data_dir)
     print(out)
