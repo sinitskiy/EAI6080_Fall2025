@@ -19,10 +19,10 @@ cd EAI6080_Fall2025
 **Windows PowerShell:**
 ```powershell
 # Create virtual environment
-python -m venv venv
+python -m venv .venv
 
 # Activate virtual environment
-.\venv\Scripts\Activate.ps1
+.\.venv\Scripts\Activate.ps1
 
 # If you get an execution policy error, run:
 # Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser

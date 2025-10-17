@@ -20,9 +20,7 @@ def download_and_prepare(data_dir):
         return csv_path
     except Exception as e:
         print(f"Error loading HLE dataset: {e}")
-        df = pd.DataFrame(columns=["id", "question", "answer", "subset", "choices"])
-        df.to_csv(csv_path, index=False)
-        return csv_path
+        return None
 
 if __name__ == "__main__":
     data_dir = "../data"
