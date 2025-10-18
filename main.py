@@ -4,6 +4,7 @@ import importlib.util
 # from importlib.machinery import SourceFileLoader
 from pathlib import Path
 import pandas as pd
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import local_secrets
 
 def _load_module_from_path(module_name: str, file_path: Path):
@@ -13,6 +14,32 @@ def _load_module_from_path(module_name: str, file_path: Path):
         spec.loader.exec_module(module)  # type: ignore[attr-defined]
         return module
     raise ImportError(f"Cannot load module {module_name} from {file_path}")
+
+
+def _workers_for_model(model_name: str) -> int:
+    name = (model_name or "").lower()
+    if name.startswith("gpt"):
+        return 16
+    return 1
+
+
+def _predict_rows_parallel(df: pd.DataFrame, predict_func, workers: int):
+    if workers <= 1 or len(df) <= 1:
+        return [predict_func(row) for _, row in df.iterrows()]
+
+    results = [None] * len(df)
+
+    def _task(i: int):
+        row = df.iloc[i]
+        return i, predict_func(row)
+
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        futures = [ex.submit(_task, i) for i in range(len(df))]
+        for fut in as_completed(futures):
+            i, pred = fut.result()
+            results[i] = pred
+
+    return results
 
 
 def load_benchmarks():
@@ -94,7 +121,7 @@ def run_predictions(data_files, models, selected_models=None):
 
         # If predictions already exist, skip AI and use that file
         if out_path.exists():
-            print(f"  Skipping model runs (found {out_path.name})")
+            print(f"  Skipping model runs ({out_path.name} already exists)")
             data_files[benchmark_name] = out_path
             continue
 
@@ -114,19 +141,13 @@ def run_predictions(data_files, models, selected_models=None):
                 continue
 
             print(f"  Running {model_name}...")
-            predictions = []
-            for idx, row in df.iterrows():
-                if idx % 10 == 0 and idx > 0:
-                    print(f"    Processed {idx} rows...")
-                pred = predict_func(row)
-                print(pred)
-                predictions.append(pred)
+            workers = _workers_for_model(model_name)
+            preds = _predict_rows_parallel(df, predict_func, workers)
+            df[col_name] = preds
 
-            df[col_name] = predictions
-
-    # Write predictions to a separate file and update mapping for this benchmark
-    df.to_csv(out_path, index=False)
-    data_files[benchmark_name] = out_path
+        # Write predictions to a separate file and update mapping for this benchmark
+        df.to_csv(out_path, index=False)
+        data_files[benchmark_name] = out_path
 
 def evaluate_predictions(data_files, evaluators):
     for benchmark_name, csv_path in data_files.items():
