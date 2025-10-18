@@ -19,7 +19,7 @@ def _load_module_from_path(module_name: str, file_path: Path):
 def _workers_for_model(model_name: str) -> int:
     name = (model_name or "").lower()
     if name.startswith("gpt"):
-        return 16
+        return 32
     return 1
 
 
@@ -110,21 +110,7 @@ def prepare_benchmarks(benchmarks, data_dir, selected=None):
 def run_predictions(data_files, models, selected_models=None):
     for benchmark_name, csv_path in data_files.items():
         print(f"\nRunning predictions for benchmark: {benchmark_name}")
-        csv_path = Path(csv_path)
-        # Determine predictions output path
-        if csv_path.stem.endswith("_w_predictions"):
-            out_path = csv_path
-            base_path = csv_path
-        else:
-            out_path = csv_path.with_name(f"{csv_path.stem}_w_predictions{csv_path.suffix}")
-            base_path = csv_path
-
-        # If predictions already exist, skip AI and use that file
-        if out_path.exists():
-            print(f"  Skipping model runs ({out_path.name} already exists)")
-            data_files[benchmark_name] = out_path
-            continue
-
+        base_path = Path(csv_path)
         if not base_path.exists():
             print(f"  Skipping {benchmark_name} (base file missing)")
             continue
@@ -135,58 +121,84 @@ def run_predictions(data_files, models, selected_models=None):
             if selected_models and model_name not in selected_models:
                 continue
 
-            col_name = f"pred_{model_name}"
-            if col_name in df.columns:
-                print(f"  Skipping {model_name} (already exists)")
+            pred_path = base_path.parent / f"{benchmark_name}_pred_{model_name}.csv"
+            if pred_path.exists():
+                print(f"  Skipping {model_name} (file exists: {pred_path.name})")
                 continue
 
             print(f"  Running {model_name}...")
             workers = _workers_for_model(model_name)
             preds = _predict_rows_parallel(df, predict_func, workers)
-            df[col_name] = preds
-
-        # Write predictions to a separate file and update mapping for this benchmark
-        df.to_csv(out_path, index=False)
-        data_files[benchmark_name] = out_path
+            out_df = pd.DataFrame({
+                "id": df["id"],
+                "prediction": preds,
+            })
+            out_df.to_csv(pred_path, index=False)
+            print(f"  Saved: {pred_path.name}")
 
 def evaluate_predictions(data_files, evaluators):
-    for benchmark_name, csv_path in data_files.items():
+    for benchmark_name, base_csv in data_files.items():
         if benchmark_name not in evaluators:
             print(f"No evaluator for {benchmark_name}, skipping evaluation")
             continue
-        
+
         print(f"\nEvaluating predictions for: {benchmark_name}")
-        if not Path(csv_path).exists():
-            print(f"  Skipping {benchmark_name} (file missing)")
+        base_csv = Path(base_csv)
+        if not base_csv.exists():
+            print(f"  Skipping {benchmark_name} (base file missing)")
             continue
-        df = pd.read_csv(csv_path)
-        evaluators[benchmark_name](df, csv_path)
+
+        pred_files = list(base_csv.parent.glob(f"{benchmark_name}_pred_*.csv"))
+        if not pred_files:
+            print(f"  No prediction files found for {benchmark_name}")
+            continue
+
+        base_df = pd.read_csv(base_csv)
+        ev = evaluators[benchmark_name]
+
+        for pf in pred_files:
+            model_name = pf.stem.split("_pred_")[-1]
+            pred_df = pd.read_csv(pf)
+            merged = base_df.merge(pred_df, on="id", how="left")
+            work_df = merged.copy()
+            pred_col = f"pred_{model_name}"
+            work_df[pred_col] = work_df["prediction"].fillna("")
+
+            out_eval = base_csv.parent / f"{benchmark_name}_eval_{model_name}.csv"
+            ev(work_df, out_eval)
+            print(f"  Wrote eval: {out_eval.name}")
 
 def generate_summary(data_files, output_path):
     summary_data = []
-    
-    for benchmark_name, csv_path in data_files.items():
-        df = pd.read_csv(csv_path)
-        pred_cols = [col for col in df.columns if col.startswith("pred_")]
-        
-        for pred_col in pred_cols:
-            model_name = pred_col.replace("pred_", "")
-            score_col = f"correct_{model_name}"
-            
-            if score_col in df.columns:
-                accuracy = df[score_col].mean() * 100
-                summary_data.append({
-                    "Benchmark": benchmark_name,
-                    "Model": model_name,
-                    "Accuracy": f"{accuracy:.2f}%",
-                    "Correct": df[score_col].sum(),
-                    "Total": len(df)
-                })
-    
+
+    for benchmark_name, base_csv in data_files.items():
+        base_csv = Path(base_csv)
+        eval_files = list(base_csv.parent.glob(f"{benchmark_name}_eval_*.csv"))
+        if not eval_files:
+            print(f"No eval files found for {benchmark_name}, skipping in summary")
+            continue
+
+        for ef in eval_files:
+            df = pd.read_csv(ef)
+            corr_cols = [c for c in df.columns if c.startswith("correct_")]
+            if not corr_cols:
+                continue
+            score_col = corr_cols[0]
+            model_name = score_col.replace("correct_", "")
+            accuracy = df[score_col].mean() * 100
+            summary_data.append({
+                "Benchmark": benchmark_name,
+                "Model": model_name,
+                "Accuracy": f"{accuracy:.2f}%",
+                "Correct": df[score_col].sum(),
+                "Total": len(df)
+            })
+
     summary_df = pd.DataFrame(summary_data)
     summary_df.to_csv(output_path, index=False)
     print(f"\nSummary saved to: {output_path}")
-    print("\n" + summary_df.to_string(index=False))
+    if not summary_df.empty:
+        print("\n" + summary_df.to_string(index=False))
 
 def main():
     parser = argparse.ArgumentParser(description="LLM Benchmarking Automation")
@@ -223,10 +235,7 @@ def main():
         files = {}
         for name in selected_names:
             base = data_dir / f"{name}.csv"
-            pred = data_dir / f"{name}_w_predictions.csv"
-            if pred.exists():
-                files[name] = pred
-            elif base.exists():
+            if base.exists():
                 files[name] = base
         return files
 
@@ -248,7 +257,6 @@ def main():
         evaluate_predictions(data_files, evaluators)
 
     if do_summary:
-        # Build a fresh map preferring predictions files
         data_files_for_summary = existing_files_map(selected_benchmarks)
         generate_summary(data_files_for_summary, data_dir / "summary.csv")
 
