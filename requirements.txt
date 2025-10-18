@@ -1,2 +1,5 @@
 pandas
 datasets
+huggingface-hub
+Pillow
+openai

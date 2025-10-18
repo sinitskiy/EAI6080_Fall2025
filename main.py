@@ -1,7 +1,19 @@
 import argparse
 import importlib
+import importlib.util
+# from importlib.machinery import SourceFileLoader
 from pathlib import Path
 import pandas as pd
+import local_secrets
+
+def _load_module_from_path(module_name: str, file_path: Path):
+    spec = importlib.util.spec_from_file_location(module_name, str(file_path))
+    if spec and spec.loader:
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)  # type: ignore[attr-defined]
+        return module
+    raise ImportError(f"Cannot load module {module_name} from {file_path}")
+
 
 def load_benchmarks():
     benchmarks = {}
@@ -12,8 +24,8 @@ def load_benchmarks():
     for file in benchmark_dir.glob("*.py"):
         if file.stem.startswith("_"):
             continue
-        module_name = f"benchmarks.{file.stem}"
-        module = importlib.import_module(module_name)
+        safe_name = file.stem.replace("-", "_")
+        module = _load_module_from_path(f"benchmarks.{safe_name}", file)
         if hasattr(module, "download_and_prepare"):
             benchmarks[file.stem] = module.download_and_prepare
     return benchmarks
@@ -27,8 +39,8 @@ def load_models():
     for file in model_dir.glob("*.py"):
         if file.stem.startswith("_"):
             continue
-        module_name = f"models.{file.stem}"
-        module = importlib.import_module(module_name)
+        safe_name = file.stem.replace("-", "_")
+        module = _load_module_from_path(f"models.{safe_name}", file)
         if hasattr(module, "predict"):
             models[file.stem] = module.predict
     return models
@@ -42,10 +54,13 @@ def load_evaluators():
     for file in eval_dir.glob("*.py"):
         if file.stem.startswith("_"):
             continue
-        module_name = f"evaluators.{file.stem}"
-        module = importlib.import_module(module_name)
+        safe_name = file.stem.replace("-", "_")
+        module = _load_module_from_path(f"evaluators.{safe_name}", file)
         if hasattr(module, "evaluate"):
-            evaluators[file.stem] = module.evaluate
+            key = file.stem
+            if key.endswith("_eval"):
+                key = key[: -len("_eval")]
+            evaluators[key] = module.evaluate
     return evaluators
 
 def prepare_benchmarks(benchmarks, data_dir, selected=None):
@@ -55,32 +70,63 @@ def prepare_benchmarks(benchmarks, data_dir, selected=None):
             continue
         print(f"Preparing benchmark: {name}")
         csv_path = func(data_dir)
-        data_files[name] = csv_path
+        try:
+            path_obj = Path(csv_path) if csv_path else None
+        except TypeError:
+            path_obj = None
+        if path_obj and path_obj.exists():
+            data_files[name] = path_obj
+        else:
+            print(f"  Skipping {name} (no data produced)")
     return data_files
 
 def run_predictions(data_files, models, selected_models=None):
     for benchmark_name, csv_path in data_files.items():
         print(f"\nRunning predictions for benchmark: {benchmark_name}")
-        df = pd.read_csv(csv_path)
-        
+        csv_path = Path(csv_path)
+        # Determine predictions output path
+        if csv_path.stem.endswith("_w_predictions"):
+            out_path = csv_path
+            base_path = csv_path
+        else:
+            out_path = csv_path.with_name(f"{csv_path.stem}_w_predictions{csv_path.suffix}")
+            base_path = csv_path
+
+        # If predictions already exist, skip AI and use that file
+        if out_path.exists():
+            print(f"  Skipping model runs (found {out_path.name})")
+            data_files[benchmark_name] = out_path
+            continue
+
+        if not base_path.exists():
+            print(f"  Skipping {benchmark_name} (base file missing)")
+            continue
+
+        df = pd.read_csv(base_path)
+
         for model_name, predict_func in models.items():
             if selected_models and model_name not in selected_models:
                 continue
-            
+
             col_name = f"pred_{model_name}"
             if col_name in df.columns:
                 print(f"  Skipping {model_name} (already exists)")
                 continue
-            
+
             print(f"  Running {model_name}...")
             predictions = []
             for idx, row in df.iterrows():
+                if idx % 10 == 0 and idx > 0:
+                    print(f"    Processed {idx} rows...")
                 pred = predict_func(row)
+                print(pred)
                 predictions.append(pred)
-            
+
             df[col_name] = predictions
-        
-        df.to_csv(csv_path, index=False)
+
+    # Write predictions to a separate file and update mapping for this benchmark
+    df.to_csv(out_path, index=False)
+    data_files[benchmark_name] = out_path
 
 def evaluate_predictions(data_files, evaluators):
     for benchmark_name, csv_path in data_files.items():
@@ -89,6 +135,9 @@ def evaluate_predictions(data_files, evaluators):
             continue
         
         print(f"\nEvaluating predictions for: {benchmark_name}")
+        if not Path(csv_path).exists():
+            print(f"  Skipping {benchmark_name} (file missing)")
+            continue
         df = pd.read_csv(csv_path)
         evaluators[benchmark_name](df, csv_path)
 

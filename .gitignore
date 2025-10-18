@@ -1,5 +1,5 @@
 # Project-specific: Do not upload benchmark data, results, or logs
-data/
+data*
 logs/
 *.csv
 benchmarking.log
@@ -40,3 +40,5 @@ models_cache/
 huggingface_cache/
 
 .github
+local_secrets.py
+tmp.py
