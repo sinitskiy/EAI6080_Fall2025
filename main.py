@@ -171,44 +171,65 @@ def main():
     parser = argparse.ArgumentParser(description="LLM Benchmarking Automation")
     parser.add_argument("--benchmarks", nargs="+", help="Specific benchmarks to run")
     parser.add_argument("--models", nargs="+", help="Specific models to run")
-    parser.add_argument("--skip-download", action="store_true", help="Skip benchmark download")
-    parser.add_argument("--skip-predict", action="store_true", help="Skip predictions")
-    parser.add_argument("--skip-eval", action="store_true", help="Skip evaluation")
-    parser.add_argument("--summary-only", action="store_true", help="Only generate summary")
+    parser.add_argument("--all", action="store_true", help="Run download, predict, evaluate, and summary")
+    parser.add_argument("--download", action="store_true", help="Download/prepare benchmarks")
+    parser.add_argument("--predict", action="store_true", help="Run model predictions")
+    parser.add_argument("--evaluate", action="store_true", help="Evaluate predictions")
+    parser.add_argument("--summary", action="store_true", help="Generate summary table")
     args = parser.parse_args()
-    
+
     base_dir = Path(__file__).parent
     data_dir = base_dir / "data"
     data_dir.mkdir(exist_ok=True)
-    
+
     benchmarks = load_benchmarks()
     models = load_models()
     evaluators = load_evaluators()
-    
+
     print(f"Loaded {len(benchmarks)} benchmarks")
     print(f"Loaded {len(models)} models")
     print(f"Loaded {len(evaluators)} evaluators")
-    
-    if args.summary_only:
-        data_files = {name: data_dir / f"{name}.csv" for name in benchmarks.keys()}
-        data_files = {k: v for k, v in data_files.items() if v.exists()}
-        generate_summary(data_files, data_dir / "summary.csv")
-        return
-    
-    if not args.skip_download:
-        data_files = prepare_benchmarks(benchmarks, data_dir, args.benchmarks)
+
+    # Determine which phases to run
+    run_all = args.all or not any([args.download, args.predict, args.evaluate, args.summary])
+    do_download = run_all or args.download
+    do_predict = run_all or args.predict
+    do_evaluate = run_all or args.evaluate
+    do_summary = run_all or args.summary
+
+    # Helper: build mapping of existing files for selected benchmarks
+    def existing_files_map(selected_names):
+        files = {}
+        for name in selected_names:
+            base = data_dir / f"{name}.csv"
+            pred = data_dir / f"{name}_w_predictions.csv"
+            if pred.exists():
+                files[name] = pred
+            elif base.exists():
+                files[name] = base
+        return files
+
+    selected_benchmarks = args.benchmarks if args.benchmarks else list(benchmarks.keys())
+
+    data_files = {}
+    if do_download:
+        data_files = prepare_benchmarks(benchmarks, data_dir, selected_benchmarks)
     else:
-        benchmark_names = args.benchmarks if args.benchmarks else benchmarks.keys()
-        data_files = {name: data_dir / f"{name}.csv" for name in benchmark_names}
-        data_files = {k: v for k, v in data_files.items() if v.exists()}
-    
-    if not args.skip_predict:
+        data_files = existing_files_map(selected_benchmarks)
+
+    if do_predict:
+        # Ensure we have some input files (from download or existing)
+        if not data_files:
+            data_files = existing_files_map(selected_benchmarks)
         run_predictions(data_files, models, args.models)
-    
-    if not args.skip_eval:
+
+    if do_evaluate:
         evaluate_predictions(data_files, evaluators)
-    
-    generate_summary(data_files, data_dir / "summary.csv")
+
+    if do_summary:
+        # Build a fresh map preferring predictions files
+        data_files_for_summary = existing_files_map(selected_benchmarks)
+        generate_summary(data_files_for_summary, data_dir / "summary.csv")
 
 if __name__ == "__main__":
     main()
