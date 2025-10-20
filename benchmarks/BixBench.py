@@ -14,10 +14,10 @@ def download_and_prepare():
 
         # skip download if file already exists
         if csv_path.exists():
-            print(f"BixBench: already exists at {csv_path.resolve()}")
+            print(f" BixBench: already exists at {csv_path.resolve()}")
             return csv_path
 
-        print(" Downloading full BixBench dataset from Hugging Face (futurehouse/BixBench)...")
+        print(" Downloading BixBench dataset from Hugging Face (futurehouse/BixBench)...")
         ds = load_dataset("futurehouse/BixBench")
 
         # combine all splits into one DataFrame
@@ -28,18 +28,21 @@ def download_and_prepare():
             dfs.append(df)
         df = pd.concat(dfs, ignore_index=True)
 
-        # keep all key fields needed for benchmarking
-        keep = [
-            "id", "question", "ideal", "hypothesis", "result",
-            "distractors", "categories", "eval_mode", "data_folder",
-            "answer", "tag", "version"
-        ]
-        df = df[[c for c in keep if c in df.columns]]
+        # --- Map fields to HLE-compatible format ---
+        df_final = pd.DataFrame()
+        df_final["id"] = df["id"]
+        df_final["question"] = df["question"]
+        df_final["answer"] = df["ideal"]                      # use real answer text
+        df_final["answer_type"] = df["eval_mode"]             # evaluation type
+        df_final["raw_subject"] = df["categories"]            # broad subject area
+        df_final["category"] = df["tag"]                      # subset / benchmark name
+        df_final["image_path"] = ""                           # no images in BixBench
 
-        # save to CSV
-        df.to_csv(csv_path, index=False)
-        print(f" Download complete. Saved to: {csv_path.resolve()}")
-        print(f" Total rows: {len(df)} | Columns: {list(df.columns)}")
+        # --- Save standardized CSV ---
+        df_final.to_csv(csv_path, index=False)
+        print(f" Download complete. Saved standardized BixBench at: {csv_path.resolve()}")
+        print(f" Total rows: {len(df_final)} | Columns: {list(df_final.columns)}")
+        print(" BixBench dataset verified and ready for benchmarking.")
         return csv_path
 
     except Exception as e:
