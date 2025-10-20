@@ -7,8 +7,9 @@ from datasets import load_dataset
 from huggingface_hub import login
 
 
-def download_and_prepare(data_dir):
-    data_dir = Path(data_dir)
+def download_and_prepare():
+    repo_root = Path(__file__).resolve().parent.parent
+    data_dir = repo_root / "data" / "benchmarks_data"
     data_dir.mkdir(parents=True, exist_ok=True)
     csv_path = data_dir / "HLE.csv"
     if csv_path.exists():
@@ -45,6 +46,5 @@ def download_and_prepare(data_dir):
 
 
 if __name__ == "__main__":
-    data_dir = "./data"
-    p = download_and_prepare(data_dir)
+    p = download_and_prepare()
     print(p)
