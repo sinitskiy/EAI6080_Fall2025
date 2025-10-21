@@ -85,13 +85,13 @@ def _process_and_save_dataset(dataset, csv_path: Path):
         
         for item in tqdm(dataset, desc="Processing Medicine Hard questions"):
             # Format question with multiple choice options
-            formatted_question = _format_question_with_options(item['question'], item['options'])
+            formatted_question, answer_letter = _format_question_with_options(item)
             
             row = {
                 'id': item['uuid'],                    # Use UUID as internal ID
                 'question': formatted_question,        # Question with formatted options (A, B, C, etc.)
                 'image_path': '',                      # SuperGPQA is text-only
-                'answer': item['answer'],              # Ground truth answer text
+                'answer': answer_letter,               # Ground truth answer (letter)
                 'answer_type': 'multipleChoice',       # All questions are multiple choice
                 'category': item['field'],             # Field as category (should be Medicine-related)
                 'raw_subject': item['subfield']        # Medical subfield (e.g., "Internal Medicine")
@@ -100,16 +100,23 @@ def _process_and_save_dataset(dataset, csv_path: Path):
             writer.writerow(row)
 
 
-def _format_question_with_options(question: str, options: List[str]) -> str:
-    """Format question with labeled multiple choice options (A, B, C, etc.)."""
+def _format_question_with_options(item: dict) -> tuple[str, str]:
+    """Format question with labeled multiple choice options (A, B, C, etc.) and return the correct answer letter."""
     # Create labeled options
     formatted_options = []
-    for i, option in enumerate(options):
+    answer_letter = None
+    for i, option in enumerate(item['options']):
         letter = chr(ord('A') + i)
         formatted_options.append(f"{letter}. {option}")
-    
+        if option == item['answer']:
+            answer_letter = letter
+
+    # Make sure we found the correct answer letter, otherwise use answer_letter from the item
+    if answer_letter is None:
+        print(f"Warning: Correct answer not found among options for question ID {item['uuid']}. Using provided answer_letter instead: {item['answer_letter']}.")
+        answer_letter = item['answer_letter']
     # Combine question with options
-    return f"{question}\n\n" + "\n".join(formatted_options)
+    return f"{item['question']}\n\n" + "\n".join(formatted_options), answer_letter
 
 
 def get_benchmark_info():
@@ -149,5 +156,6 @@ if __name__ == "__main__":
         print(f"Subset criteria: {info['subset_criteria']}")
         print(f"Paper: {info['paper']}")
     
-    p = download_and_prepare()
-    print(p)
+    if args.download:
+        p = download_and_prepare()
+        print(p)
