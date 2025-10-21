@@ -16,15 +16,12 @@ from datasets import load_dataset
 from tqdm import tqdm
 
 
-def download_and_prepare(data_dir: str) -> str:
+def download_and_prepare():
     """
     Download and prepare SuperGPQA Medicine Hard subset.
     
     This function downloads the full SuperGPQA dataset and filters it to include
     only Medicine discipline questions with Hard difficulty level.
-    
-    Args:
-        data_dir: Directory to save the processed dataset (typically 'data/benchmarks_data')
         
     Returns:
         Path to the saved CSV file
@@ -32,8 +29,12 @@ def download_and_prepare(data_dir: str) -> str:
     print("Downloading SuperGPQA dataset from HuggingFace...")
     
     # Create data directory
-    data_path = Path(data_dir)
-    data_path.mkdir(parents=True, exist_ok=True)
+    repo_root = Path(__file__).resolve().parent.parent
+    data_dir = repo_root / "data" / "benchmarks_data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    csv_path = data_dir / "SuperGPQA_Medicine_Hard.csv"
+    if csv_path.exists():
+        return csv_path
     
     # Load full dataset from HuggingFace
     try:
@@ -55,17 +56,13 @@ def download_and_prepare(data_dir: str) -> str:
     
     if len(filtered_dataset) == 0:
         print("Warning: No Medicine Hard questions found in dataset!")
-        print("Available disciplines:", set(item['discipline'] for item in dataset[:100]))
-        print("Available difficulties:", set(item['difficulty'] for item in dataset[:100]))
-    
-    # Define CSV path
-    csv_path = data_path / "SuperGPQA_Medicine_Hard.csv"
+        return None
     
     # Process and save filtered dataset
     _process_and_save_dataset(filtered_dataset, csv_path)
     
     print(f"Dataset saved to: {csv_path}")
-    return str(csv_path)
+    return csv_path
 
 
 def _process_and_save_dataset(dataset, csv_path: Path):
@@ -139,7 +136,6 @@ if __name__ == "__main__":
     
     parser = argparse.ArgumentParser(description='SuperGPQA Medicine Hard Benchmark Downloader')
     parser.add_argument('--download', action='store_true', help='Download the dataset')
-    parser.add_argument('--data-dir', default='data/benchmarks_data', help='Data directory')
     parser.add_argument('--info', action='store_true', help='Show benchmark information')
     
     args = parser.parse_args()
@@ -153,6 +149,5 @@ if __name__ == "__main__":
         print(f"Subset criteria: {info['subset_criteria']}")
         print(f"Paper: {info['paper']}")
     
-    if args.download:
-        csv_path = download_and_prepare(args.data_dir)
-        print(f"Download completed: {csv_path}")
+    p = download_and_prepare()
+    print(p)
