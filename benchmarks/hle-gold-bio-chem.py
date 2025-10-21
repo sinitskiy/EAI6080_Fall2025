@@ -2,10 +2,7 @@ from pathlib import Path
 from datasets import load_dataset
 
 
-def download_and_prepare():
-    repo_root = Path(__file__).resolve().parent.parent
-    data_dir = repo_root / "data" / "benchmarks_data"
-    data_dir.mkdir(parents=True, exist_ok=True)
+def download_and_prepare(data_dir):
     csv_path = data_dir / "hle-gold-bio-chem.csv"
     if csv_path.exists():
         return csv_path

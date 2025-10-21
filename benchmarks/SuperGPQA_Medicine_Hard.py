@@ -16,7 +16,7 @@ from datasets import load_dataset
 from tqdm import tqdm
 
 
-def download_and_prepare():
+def download_and_prepare(data_dir):
     """
     Download and prepare SuperGPQA Medicine Hard subset.
     
@@ -28,10 +28,7 @@ def download_and_prepare():
     """
     print("Downloading SuperGPQA dataset from HuggingFace...")
     
-    # Create data directory
-    repo_root = Path(__file__).resolve().parent.parent
-    data_dir = repo_root / "data" / "benchmarks_data"
-    data_dir.mkdir(parents=True, exist_ok=True)
+    # check for existing data file
     csv_path = data_dir / "SuperGPQA_Medicine_Hard.csv"
     if csv_path.exists():
         return csv_path
