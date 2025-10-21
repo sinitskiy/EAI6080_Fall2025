@@ -35,31 +35,29 @@ def download_and_prepare(data_dir):
     
     # Load full dataset from HuggingFace
     try:
-        dataset = load_dataset("m-a-p/SuperGPQA", split="train", trust_remote_code=True)
-    except Exception as e:
-        print(f"Error loading dataset: {e}")
-        print("Trying alternative loading method...")
         dataset = load_dataset("m-a-p/SuperGPQA", split="train")
+        print(f"Full dataset loaded: {len(dataset)} questions")
     
-    print(f"Full dataset loaded: {len(dataset)} questions")
-    
-    # Filter for Medicine discipline and Hard difficulty
-    filtered_dataset = []
-    for item in dataset:
-        if item['discipline'] == 'Medicine' and item['difficulty'] == 'hard':
-            filtered_dataset.append(item)
-    
-    print(f"Filtered to Medicine Hard questions: {len(filtered_dataset)} questions")
-    
-    if len(filtered_dataset) == 0:
-        print("Warning: No Medicine Hard questions found in dataset!")
+        # Filter for Medicine discipline and Hard difficulty
+        filtered_dataset = []
+        for item in dataset:
+            if item['discipline'] == 'Medicine' and item['difficulty'] == 'hard':
+                filtered_dataset.append(item)
+        
+        print(f"Filtered to Medicine Hard questions: {len(filtered_dataset)} questions")
+        
+        if len(filtered_dataset) == 0:
+            print("Warning: No Medicine Hard questions found in dataset!")
+            return None
+        
+        # Process and save filtered dataset
+        _process_and_save_dataset(filtered_dataset, csv_path)
+        
+        print(f"Dataset saved to: {csv_path}")
+        return csv_path
+    except Exception as e:
+        print(f"Error downloading or processing SuperGPQA dataset: {e}")
         return None
-    
-    # Process and save filtered dataset
-    _process_and_save_dataset(filtered_dataset, csv_path)
-    
-    print(f"Dataset saved to: {csv_path}")
-    return csv_path
 
 
 def _process_and_save_dataset(dataset, csv_path: Path):

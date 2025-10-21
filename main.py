@@ -321,7 +321,7 @@ def main():
         selected_models = args.models if args.models else _list_available_stems("models")
         models = load_models(selected_models)
         print(f"Loaded {len(models)} models")
-    run_predictions(data_files, models, selected_models, args.sample, args.seed)
+        run_predictions(data_files, models, selected_models, args.sample, args.seed)
 
     if do_evaluate:
         # Load only required evaluator modules
