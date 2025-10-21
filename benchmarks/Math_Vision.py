@@ -37,15 +37,27 @@ def download_and_prepare(data_dir=None):
         
         for i in range(len(test_dataset)):
             sample = test_dataset[i]
+            
+            # Merge question and options into a single question column
+            question_text = sample.get('question', '')
+            options_text = sample.get('options', '')
+            
+            # Combine question and options
+            if options_text:
+                merged_question = f"{question_text}\nOptions: {options_text}"
+            else:
+                merged_question = question_text
+            
             df_data.append({
                 'id': i+1,
-                'question': sample.get('question', ''),
+                'question': merged_question,  # Use merged question here
                 'options': sample.get('options', ''),
                 'answer': sample.get('answer', ''),
-                'level': sample.get('level', ''),
-                'subject': sample.get('subject', ''),
+                'category': sample.get('level', ''),
+                'raw_subject': sample.get('subject', ''),
                 'image_path': None
             })
+            
         
         df = pd.DataFrame(df_data)
         
@@ -62,13 +74,13 @@ def download_and_prepare(data_dir=None):
                     
                     if isinstance(image_data, Image.Image):
                         # If it's already a PIL Image, save it directly
-                        img_path = image_dir / f"{i}.png"
+                        img_path = image_dir / f"image{i}.png"
                         image_data.save(img_path)
                         df.loc[i, 'image_path'] = str(img_path)
                     elif isinstance(image_data, bytes):
                         # If it's bytes, open and save
                         img = Image.open(BytesIO(image_data))
-                        img_path = image_dir / f"{i}.png"
+                        img_path = image_dir / f"image{i+1}.png"
                         img.save(img_path)
                         df.loc[i, 'image_path'] = str(img_path)
                     else:
