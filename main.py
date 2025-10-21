@@ -138,7 +138,7 @@ def prepare_benchmarks(benchmarks, data_dir, selected=None):
             print(f"  Skipping {name} (no data produced)")
     return data_files
 
-def run_predictions(data_files, models, selected_models=None):
+def run_predictions(data_files, models, selected_models=None, sample_n: int | None = None, seed: int | None = None):
     for benchmark_name, csv_path in data_files.items():
         print(f"\nRunning predictions for benchmark: {benchmark_name}")
         base_path = Path(csv_path)
@@ -152,19 +152,30 @@ def run_predictions(data_files, models, selected_models=None):
 
         df = pd.read_csv(base_path)
 
+        # Optional sampling for expensive LLMs
+        subset_suffix = ""
+        df_use = df
+        if sample_n and sample_n > 0:
+            n = min(sample_n, len(df))
+            if n < len(df):
+                rs = seed if seed is not None else 0
+                df_use = df.sample(n=n, random_state=rs).reset_index(drop=True)
+                subset_suffix = f"__sample{n}_seed{rs}"
+                print(f"  Using a subset of {n}/{len(df)} rows (seed={rs})")
+
         for model_name, predict_func in models.items():
             if selected_models and model_name not in selected_models:
                 continue
 
-            pred_path = pred_dir / f"{benchmark_name}_pred_{model_name}.csv"
+            pred_path = pred_dir / f"{benchmark_name}_pred_{model_name}{subset_suffix}.csv"
             if pred_path.exists():
                 print(f"  Skipping {model_name} (file exists: {pred_path.name})")
                 continue
 
             print(f"  Running {model_name}...")
             workers = _workers_for_model(model_name)
-            preds = _predict_rows_parallel(df, predict_func, workers)
-            out_df = pd.DataFrame({"id": df["id"], "answer": df["answer"], "prediction": preds})
+            preds = _predict_rows_parallel(df_use, predict_func, workers)
+            out_df = pd.DataFrame({"id": df_use["id"], "answer": df_use.get("answer", pd.Series([None]*len(df_use))), "prediction": preds})
             out_df.to_csv(pred_path, index=False)
             print(f"  Saved: {pred_path.name}")
 
@@ -258,6 +269,8 @@ def main():
     parser.add_argument("--predict", action="store_true", help="Run model predictions")
     parser.add_argument("--evaluate", action="store_true", help="Evaluate predictions")
     parser.add_argument("--summary", action="store_true", help="Generate summary table")
+    parser.add_argument("--sample", type=int, help="Random sample size per benchmark for predictions")
+    parser.add_argument("--seed", type=int, default=0, help="Random seed for sampling")
     args = parser.parse_args()
 
     base_dir = Path(__file__).parent
@@ -308,7 +321,7 @@ def main():
         selected_models = args.models if args.models else _list_available_stems("models")
         models = load_models(selected_models)
         print(f"Loaded {len(models)} models")
-        run_predictions(data_files, models, selected_models)
+    run_predictions(data_files, models, selected_models, args.sample, args.seed)
 
     if do_evaluate:
         # Load only required evaluator modules
