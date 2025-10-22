@@ -1,131 +1,88 @@
 """
-DeepSeek-R1-Distill-Qwen-7B benchmark model for HLE Bio/Med dataset.
+DeepSeek-R1-Distill-Qwen-7B model for benchmark predictions.
 Compatible with: python main.py --predict --models deepseek_r1_distill_qwen_7b
-
-Author: Casual Dineshbhai Kalotra
 """
 
-import os
-import json
-import pandas as pd
-from tqdm import tqdm
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
 
-
-# ---------------------------------------------------------------------
-# File paths (absolute HPC-safe paths)
-# ---------------------------------------------------------------------
-BASE_DIR = "/courses/EAI6080.202615/students/kalotra.c/benchmark_project/Repositories/EAI6080_Fall2025"
-DATA_PATH = os.path.join(BASE_DIR, "data/benchmarks_data/HLE_bio_med.csv")
-OUT_DIR = os.path.join(BASE_DIR, "data/predictions_and_evaluations")
-
-os.makedirs(OUT_DIR, exist_ok=True)
-PRED_PATH = os.path.join(OUT_DIR, "HLE_bio_med_pred_deepseek_r1_distill_qwen_7b.csv")
-METRICS_PATH = os.path.join(OUT_DIR, "HLE_bio_med_metrics_deepseek_r1_distill_qwen_7b.json")
+_model = None
+_tokenizer = None
+MODEL_NAME = "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B"
 
 
-# ---------------------------------------------------------------------
-# Helper functions
-# ---------------------------------------------------------------------
-def build_prompt(question: str) -> str:
-    """Return a concise biomedical reasoning prompt."""
+def _get_model():
+    """Load model and tokenizer once."""
+    global _model, _tokenizer
+    if _model and _tokenizer:
+        return _model, _tokenizer
+
+    print(f"🔄 Loading model: {MODEL_NAME}")
+    _tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+    if torch.cuda.is_available():
+        _model = AutoModelForCausalLM.from_pretrained(
+            MODEL_NAME, dtype=torch.float16, device_map="auto"
+        )
+        print(f"🚀 Using GPU: {torch.cuda.get_device_name(0)}")
+    else:
+        _model = AutoModelForCausalLM.from_pretrained(
+            MODEL_NAME, dtype=torch.float32, device_map="auto"
+        )
+        print("⚠️ Running on CPU.")
+    return _model, _tokenizer
+
+
+def _build_prompt(question: str, answer_type: str) -> str:
+    """Format the prompt based on question type."""
+    if (answer_type or "").lower() == "multiplechoice":
+        return (
+            "You are a biomedical reasoning assistant. "
+            "Choose the correct option.\n\n"
+            f"Question:\n{question}\n\n"
+            "Answer with only the letter: A, B, C, or D."
+        )
     return (
         "You are a biomedical reasoning assistant. "
-        "Read the question carefully and choose the best option.\n\n"
+        "Provide a concise, factual answer.\n\n"
         f"Question:\n{question}\n\n"
-        "Answer with only the letter: A, B, C, or D."
+        "Answer:"
     )
 
 
-def detect_label_column(df: pd.DataFrame) -> str:
-    """Detect which column contains the gold (correct) answer."""
-    for c in ["ground_truth_answer", "label", "answer"]:
-        if c in df.columns:
-            return c
-    raise ValueError(
-        f"Dataset missing gold answer column. Expected one of "
-        f"['ground_truth_answer', 'label', 'answer'], but found: {list(df.columns)}"
-    )
-
-
-def extract_letter(text: str) -> str:
-    """Extract the first capital letter (A/B/C/D) from model output."""
-    for ch in "ABCD":
-        if ch in text:
-            return ch
-    for ch in "abcd":
+def _extract_choice(text: str) -> str:
+    """Extract A–D letter if present."""
+    if not isinstance(text, str):
+        return str(text)
+    for ch in "ABCDabcd":
         if ch in text:
             return ch.upper()
-    return "?"
+    return text.strip()
 
 
-# ---------------------------------------------------------------------
-# Main predict() entry point (called by main.py)
-# ---------------------------------------------------------------------
-def predict():
-    """Run DeepSeek-R1-Distill-Qwen-7B on HLE Bio/Med and save predictions."""
-    if not os.path.exists(DATA_PATH):
-        raise FileNotFoundError(f"Dataset not found at: {DATA_PATH}")
+def predict(row):
+    """Return model prediction for one row."""
+    q = str(row.get("question", "")).strip()
+    if not q:
+        return "ERROR: Empty question."
 
-    df = pd.read_csv(DATA_PATH)
-    print(f"✅ Loaded dataset: {DATA_PATH} | {len(df)} rows")
-
-    label_col = detect_label_column(df)
-    model_name = "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B"
-
-    print(f"🔄 Loading model: {model_name}")
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
-    model = AutoModelForCausalLM.from_pretrained(
-        model_name,
-        torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
-        device_map="auto"
-    )
-
-    preds = []
-    for i, row in tqdm(df.iterrows(), total=len(df), desc="Generating predictions"):
-        q = str(row["question"])
-        gold = str(row[label_col]).strip().upper()
-        prompt = build_prompt(q)
+    answer_type = str(row.get("answer_type", "open")).strip()
+    try:
+        model, tokenizer = _get_model()
+        prompt = _build_prompt(q, answer_type)
         inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
 
         with torch.no_grad():
-            out = model.generate(
+            outputs = model.generate(
                 **inputs,
-                max_new_tokens=16,
+                max_new_tokens=64 if answer_type.lower() != "multiplechoice" else 16,
                 do_sample=False,
                 temperature=0.0,
                 pad_token_id=tokenizer.eos_token_id,
             )
 
-        raw = tokenizer.decode(out[0][inputs["input_ids"].shape[1]:], skip_special_tokens=True)
-        pred = extract_letter(raw)
-        preds.append({
-            "index": i,
-            "question": q,
-            "gold": gold,
-            "prediction": pred,
-            "correct": int(pred == gold),
-            "raw_output": raw.strip(),
-        })
-
-    df_out = pd.DataFrame(preds)
-    df_out.to_csv(PRED_PATH, index=False)
-    acc = df_out["correct"].mean() if len(df_out) > 0 else 0.0
-    metrics = {"accuracy": float(acc), "total": len(df_out)}
-
-    with open(METRICS_PATH, "w") as f:
-        json.dump(metrics, f, indent=2)
-
-    print(f"📁 Saved predictions → {PRED_PATH}")
-    print(f"📊 Accuracy: {acc:.3f} ({metrics['total']} samples)")
-    print(f"📄 Metrics saved → {METRICS_PATH}")
-
-    return metrics
-
-
-# ---------------------------------------------------------------------
-# Safety: prevent code from executing on import
-# ---------------------------------------------------------------------
-if __name__ == "__main__":
-    predict()
+        text = tokenizer.decode(
+            outputs[0][inputs["input_ids"].shape[1]:], skip_special_tokens=True
+        ).strip()
+        return _extract_choice(text) if answer_type.lower() == "multiplechoice" else text
+    except Exception as e:
+        return f"ERROR: {e}"
