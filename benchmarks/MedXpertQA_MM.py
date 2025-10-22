@@ -14,9 +14,13 @@ def download_and_prepare(data_dir):
 
     try:
         # load the dataset from huggingface
-        ds = load_dataset("TsinghuaC3I/MedXpertQA", "MM", split="test")
-        keep = ['id', 'question','options','label','images','medical_task','body_system','question_type']
+        ds = load_dataset("TsinghuaC3I/MedXpertQA", 'MM', split="test")
+        keep = ['id', 'question', 'label', 'images', 'medical_task', 'body_system',
+                # 'question_type'
+                ]
         df = ds.remove_columns([c for c in ds.column_names if c not in keep]).to_pandas()
+        df = df.rename(columns={'label':'answer', 'medical_task':'category', 'body_system':'raw_subject'})
+        df['answer_type'] = 'multiple_choice'
         
         # create a folder with images
         image_dir = data_dir /"MedXpertQA_MM"
@@ -30,14 +34,14 @@ def download_and_prepare(data_dir):
                 local_dir=image_dir,
             )
         
-        print(f"✓ Downloaded to: {zip_path}")
+        print(f"Downloaded file with images to: {zip_path}")
         print(f"\nExtracting...")
 
-# Extract
+        # Extract
         with zipfile.ZipFile(zip_path, 'r') as zip_ref:
             zip_ref.extractall(image_dir)
 
-        print(f"✓ Extraction complete!")
+        print(f"Extraction complete!")
         
         # Move images from nested folder to parent folder
         extracted_images_dir = image_dir / "images"
@@ -47,17 +51,15 @@ def download_and_prepare(data_dir):
                 shutil.move(str(img_file), str(image_dir / img_file.name))
             # Remove the now-empty images folder
             extracted_images_dir.rmdir()
-            print(f"✓ Moved images directly to {image_dir}")
-        
-        # Optional: Remove zip file
+            print(f"Moved images directly to {image_dir}")
         os.remove(zip_path)
-        print(f"✓ Cleaned up zip file")      
+        print(f"Cleaned up zip file")      
         
         
         # save images from ds['image'] and add a column to df with paths to these images
         image_paths = []
         
-        for i, img in enumerate(ds['images']):
+        for _, img in enumerate(ds['images']):
             if img and img != '':
                 # If img is a single filename
                 if isinstance(img, str):
@@ -86,5 +88,5 @@ def download_and_prepare(data_dir):
 
 
 if __name__ == "__main__":
-    p = download_and_prepare(data_dir="data/benchmarks_data/")
+    p = download_and_prepare(data_dir="../data/benchmarks_data/")
     print(p)

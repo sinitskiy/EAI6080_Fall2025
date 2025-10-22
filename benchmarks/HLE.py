@@ -44,5 +44,5 @@ def download_and_prepare(data_dir):
 
 
 if __name__ == "__main__":
-    p = download_and_prepare()
+    p = download_and_prepare(data_dir="data/benchmarks_data/")
     print(p)
