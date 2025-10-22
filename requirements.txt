@@ -3,3 +3,4 @@ datasets
 huggingface-hub
 Pillow
 openai
+google-generativeai

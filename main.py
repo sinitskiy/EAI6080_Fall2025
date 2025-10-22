@@ -1,7 +1,6 @@
 import argparse
 import importlib
 import importlib.util
-# from importlib.machinery import SourceFileLoader
 from pathlib import Path
 import pandas as pd
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -20,18 +19,30 @@ def _workers_for_model(model_name: str) -> int:
     name = (model_name or "").lower()
     if name.startswith("gpt"):
         return 128
+    if name.startswith("gemini"):
+        return 64
     return 1
 
 
 def _predict_rows_parallel(df: pd.DataFrame, predict_func, workers: int):
     if workers <= 1 or len(df) <= 1:
-        return [predict_func(row) for _, row in df.iterrows()]
+        out = []
+        for _, row in df.iterrows():
+            try:
+                out.append(predict_func(row))
+            except Exception:
+                out.append("")
+        return out
 
     results = [None] * len(df)
 
     def _task(i: int):
         row = df.iloc[i]
-        return i, predict_func(row)
+        try:
+            pred = predict_func(row)
+        except Exception:
+            pred = ""
+        return i, pred
 
     with ThreadPoolExecutor(max_workers=workers) as ex:
         futures = [ex.submit(_task, i) for i in range(len(df))]
