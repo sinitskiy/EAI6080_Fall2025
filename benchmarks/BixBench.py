@@ -6,7 +6,7 @@ import shutil
 import requests
 
 
-def download_and_prepare():
+def download_and_prepare(data_dir=None):
     try:
         # === PATH SETUP ===
         repo_root = Path(__file__).resolve().parent.parent
