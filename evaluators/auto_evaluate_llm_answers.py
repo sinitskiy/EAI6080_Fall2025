@@ -11,10 +11,8 @@ Handles both multiple-choice and free-text questions.
 import pandas as pd
 import re
 from difflib import SequenceMatcher
+import sys
 
-# -------------------------------
-# Helper functions
-# -------------------------------
 
 def normalize_text(text: str) -> str:
     """Lowercase, strip whitespace, and remove punctuation for fair comparison."""
@@ -51,10 +49,6 @@ def semantic_match(prediction: str, answer: str, threshold: float = 0.85) -> boo
     return ratio >= threshold
 
 
-# -------------------------------
-# Main logic
-# -------------------------------
-
 def auto_evaluate(csv_path: str, output_path: str = None):
     df = pd.read_csv(csv_path)
 
@@ -79,14 +73,10 @@ def auto_evaluate(csv_path: str, output_path: str = None):
         output_path = csv_path.replace(".csv", "_auto_eval.csv")
 
     df.to_csv(output_path, index=False)
-    print(f"✅ Evaluation complete. Saved to: {output_path}")
+    print(f"Evaluation complete. Saved to: {output_path}")
     print(f"Total questions: {len(df)} | Correct: {sum(results)} | Accuracy: {sum(results)/len(df)*100:.1f}%")
 
 
-# -------------------------------
-# Example usage
-# -------------------------------
 if __name__ == "__main__":
-    # Change this path to your input CSV
-    input_csv = r"D:\ragqa-arena\rag-qa-arena\DeepSeekR1_RAGQA_Science.csv"
+    input_csv = sys.argv[1]
     auto_evaluate(input_csv)
