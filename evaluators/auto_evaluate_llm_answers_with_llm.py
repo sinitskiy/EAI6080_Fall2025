@@ -10,7 +10,10 @@ import os
 import re
 import sys
 import pandas as pd
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from difflib import SequenceMatcher  # retained for compatibility
+
+LLM_MODEL_JUDGE = "gpt-4.1"
 
 # ---------- helpers ----------
 def normalize_text(text: str) -> str:
@@ -31,16 +34,28 @@ def _get_openai_client():
     Lazy-create and memoize an OpenAI client using env var OPENAI_API_KEY.
     Returns None if key/SDK is missing; callers handle fallback.
     """
-    api_key = os.environ.get("OPENAI_API_KEY")
-    if not api_key:
-        return None
-    try:
-        from openai import OpenAI  # requires openai>=1.0
-    except Exception:
-        return None
+    
     if getattr(_get_openai_client, "_client", None) is None:
+        api_key = os.environ.get("OPENAI_API_KEY")
+        if not api_key:
+            print("Missing OPENAI_API_KEY")
+            return None
+        try:
+            from openai import OpenAI  # requires openai>=1.0
+        except Exception:
+            print("Failed to import OpenAI")
+            return None
         _get_openai_client._client = OpenAI(api_key=api_key)
     return _get_openai_client._client
+
+def _workers_for_judge(model_name: str) -> int:
+    name = (model_name or "").lower()
+    if name.startswith("gpt"):
+        return 32 #128
+    if name.startswith("gemini"):
+        return 64
+    return 1
+
 
 def match_multiple_choice(prediction: str, answer: str) -> bool:
     """
@@ -75,9 +90,8 @@ def match_multiple_choice(prediction: str, answer: str) -> bool:
 
     try:
         resp = client.chat.completions.create(
-            model="gpt-4o-mini",
-            temperature=0,
-            max_tokens=4,
+            model=LLM_MODEL_JUDGE,
+            # temperature=0,
             messages=[{"role": "system", "content": system},
                       {"role": "user", "content": user}],
         )
@@ -90,7 +104,7 @@ def semantic_match(prediction: str, answer: str, threshold: float = 0.85) -> boo
     """
     Judge open-ended correctness. Fast-path equality and ±1% numeric tolerance; otherwise ask an LLM for 0/1.
     """
-    if not isinstance(prediction, str) or not isinstance(answer: str):
+    if not isinstance(prediction, str) or not isinstance(answer, str):
         return False
     p_norm, a_norm = normalize_text(prediction), normalize_text(answer)
     if not p_norm or not a_norm:
@@ -128,15 +142,15 @@ def semantic_match(prediction: str, answer: str, threshold: float = 0.85) -> boo
 
     try:
         resp = client.chat.completions.create(
-            model="gpt-4o-mini",
-            temperature=0,
-            max_tokens=4,
+            model=LLM_MODEL_JUDGE,
+            # temperature=0,
             messages=[{"role": "system", "content": system},
                       {"role": "user", "content": user}],
         )
         out = (resp.choices[0].message.content or "").strip()
         return out.startswith("1")
-    except Exception:
+    except Exception as e:
+        print(f"Error occurred: {e}")
         return False
 
 # ---------- evaluator (I/O and reporting flow preserved) ----------
@@ -173,32 +187,45 @@ def auto_evaluate(csv_path: str, dataset_path: str = None, output_path: str = No
                 df = dfd[merge_columns].merge(df, on='id', how='left')
                 if verbose: print("Merged 'answer_type' column into predictions DataFrame.")
 
-    results = []
-    df = df.dropna(subset=["prediction", "answer"])
-    for _, row in df.iterrows():
-        ans, pred = str(row["answer"]), str(row["prediction"])
-        
-        # is this a multiple-choice question?
+    df = df.dropna(subset=["prediction", "answer"])  # keep only rows we can judge
+
+    # Row judge function for parallel execution
+    def _judge_row(i: int):
         try:
-            this_is_multiple_choice = row.get("answer_type", None) in ["multiple_choice", "multipleChoice"]
-        except:
-            this_is_multiple_choice = is_multiple_choice(ans)
+            row = df.iloc[i]
+            ans, pred = str(row["answer"]), str(row["prediction"]) 
+            try:
+                this_is_multiple_choice = row.get("answer_type", None) in ["multiple_choice", "multipleChoice"]
+            except Exception:
+                this_is_multiple_choice = is_multiple_choice(ans)
+            if this_is_multiple_choice:
+                return i, 1 if match_multiple_choice(pred, ans) else 0
+            else:
+                return i, 1 if semantic_match(pred, ans) else 0
+        except Exception:
+            return i, 0
 
-        # decision via enhanced judges (signatures preserved)
-        if this_is_multiple_choice:
-            correct = 1 if match_multiple_choice(pred, ans) else 0
-        else:
-            correct = 1 if semantic_match(pred, ans) else 0
+    # Parallelize judging to enable multiple chat completions in flight
+    results = [0] * len(df)
+    workers = _workers_for_judge(LLM_MODEL_JUDGE)
+    if len(df) <= 1 or workers <= 1:
+        for i in range(len(df)):
+            _, val = _judge_row(i)
+            results[i] = val
+    else:
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            futures = [ex.submit(_judge_row, i) for i in range(len(df))]
+            for fut in as_completed(futures):
+                i, val = fut.result()
+                results[i] = val
 
-        results.append(correct)
-
-    df["Auto Correct/Incorrect"] = results
+    df["AutoLLM Correct/Incorrect"] = results
     
     if "Correct/Incorrect" in df.columns:
-        df["Different Auto vs Human"] = (df["Auto Correct/Incorrect"] != df["Correct/Incorrect"]).astype(int)
-        if df["Different Auto vs Human"].sum() > 0:
+        df["Different AutoLLM vs Human"] = (df["AutoLLM Correct/Incorrect"] != df["Correct/Incorrect"]).astype(int)
+        if df["Different AutoLLM vs Human"].sum() > 0:
             print("Discrepancies between human and auto evaluation:")
-            print(df[df["Different Auto vs Human"] == 1][["answer", "prediction", "Correct/Incorrect", "Auto Correct/Incorrect"]])
+            print(df[df["Different AutoLLM vs Human"] == 1][["answer", "prediction", "Correct/Incorrect", "AutoLLM Correct/Incorrect"]])
         else:
             print("No discrepancies between human and auto evaluation.")
 
@@ -209,14 +236,15 @@ def auto_evaluate(csv_path: str, dataset_path: str = None, output_path: str = No
     df.to_csv(output_path, index=False)
     if verbose: print(f"Evaluation complete. Saved to: {output_path}")
     acc_auto = sum(results)/len(df)*100
-    if verbose: print(f"Total questions: {len(df)} | Auto-found Correct: {sum(results)} | Accuracy: {acc_auto:.1f}%")
+    if verbose: print(f"Total questions: {len(df)} | AutoLLM-found Correct: {sum(results)} | Accuracy: {acc_auto:.1f}%")
     if "Correct/Incorrect" in df.columns:
         if verbose: print(f"Total questions: {len(df)} | Human-found Correct: {int(sum(df['Correct/Incorrect']))} | Accuracy: {sum(df['Correct/Incorrect'])/len(df)*100:.1f}%")
-        if verbose: print(f"Total discrepancies with human evaluation: {df['Different Auto vs Human'].sum()}, or {df['Different Auto vs Human'].sum()/len(df)*100:.1f}%")
+        if verbose: print(f"Total discrepancies with human evaluation: {df['Different AutoLLM vs Human'].sum()}, or {df['Different AutoLLM vs Human'].sum()/len(df)*100:.1f}%")
 
     return acc_auto
 
 if __name__ == "__main__":
     input_csv = sys.argv[1]
+    # input_csv = ".\data\predictions_and_evaluations\manual_evaluation\9sets_human_vs_auto_combined.csv"
     acc_auto = auto_evaluate(input_csv, dataset_path=sys.argv[2] if len(sys.argv) > 2 else None, verbose=True)
     print(f"Auto-evaluation accuracy: {acc_auto:.1f}%")
