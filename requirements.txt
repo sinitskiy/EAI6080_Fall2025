@@ -4,3 +4,5 @@ huggingface-hub
 Pillow
 openai
 google-generativeai
+matplotlib
+scipy

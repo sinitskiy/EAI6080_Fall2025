@@ -42,3 +42,5 @@ huggingface_cache/
 .github
 local_secrets.py
 tmp.py
+lit_data_score_vs_t/*.csv
+lit_data_score_vs_t/*.png
