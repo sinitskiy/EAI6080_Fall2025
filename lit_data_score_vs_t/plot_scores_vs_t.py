@@ -48,6 +48,12 @@ except FileNotFoundError:
     # df1 contains dates, so it has priority
     df2_missing_in_1 = df2[~df2['model'].isin(set(df1['model']))]
     df_models = pd.concat([df1, df2_missing_in_1], ignore_index=True)
+    
+    # add from the additional file
+    df3 = pd.read_csv('additional_model_metadata.csv')
+    df3['release_date'] = df3['time_released'].apply(parse_date)
+    df_models = pd.concat([df_models, df3], ignore_index=True)
+    
     df_models.to_csv('metadata_on_models.csv', index=False)
     print(f"Total models with metadata found in two files: {len(df_models)}")
 
