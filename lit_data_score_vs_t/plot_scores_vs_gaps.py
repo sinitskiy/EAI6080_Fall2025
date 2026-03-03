@@ -84,7 +84,7 @@ for benchmark in ['GPQA', 'MMLU', 'MMLU-Pro', 'MMMU']:
 from scipy import stats
 x_data = df_results['best_overall'].values * 100
 y_data = df_results['gap'].values * 100
-slope, intercept, r_value, p_value, std_err = stats.linregress(x_data, y_data)
+slope, intercept, r_value, p_value, std_err = stats.linregress(x_data, y_data, alternative='less')
 line_x = np.array([x_data.min(), x_data.max()])
 line_y = slope * line_x + intercept
 ax.plot(line_x, line_y, color='gray', linestyle='--', linewidth=2, alpha=0.5, zorder=1)
@@ -99,4 +99,15 @@ ax.set_ylim(-10, 40)
 ax.legend(loc='upper right', fontsize=24, framealpha=0.95)
 plt.tight_layout()
 plt.savefig('current_gaps_vs_current_best_scores.png', dpi=300, bbox_inches='tight', facecolor='white')
-plt.show()
+# plt.show()
+
+# p-values for the negative correlation between gap and best score
+print("Is there a significant negative correlation between gap and best score?")
+print(f"p-value across all four benchmarks together: {p_value:.3e}")
+for benchmark in ['GPQA', 'MMLU', 'MMLU-Pro', 'MMMU']:
+    bench_data = df_results[df_results['benchmark'] == benchmark]
+    x_data = bench_data['best_overall'].values * 100
+    y_data = bench_data['gap'].values * 100
+    slope, intercept, r_value, p_value, std_err = stats.linregress(x_data, y_data, alternative='less')
+    print(f"{benchmark}: p-value={p_value:.3e}")
+    
